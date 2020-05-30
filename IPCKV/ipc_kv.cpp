@@ -1,36 +1,104 @@
 #include "ipc_kv.h"
 
-IPC_KV::~IPC_KV()
+IPC_KV::IPC_KV(std::string name) :
+	m_name(std::move(name)),
+	m_handle_prefix("Global\\IPCKV_" + m_name + "_"),
+	m_lock_prefix("IPCKV_" + m_name + "_")
 {
-	for (auto buffer : m_buffers)
+	std::string m_event_name = "IPCKV_" + m_name;
+
+	if (m_event_name.length() > MAX_PATH)
 	{
-		UnmapViewOfFile(buffer.second);
+		throw std::exception("too long name.");
 	}
 
-	for (auto handle : m_handles)
+	m_clear_event_handle = CreateEvent(NULL, FALSE, FALSE, m_event_name.c_str());
+
+	if (m_clear_event_handle == nullptr)
 	{
-		CloseHandle(handle.second);
+		throw std::exception("unable to create event for clearing. " + GetLastError());
+	}
+
+	//////////////////////////////////////////////////
+
+	auto clear_callback = [](PVOID p, BOOLEAN b) 
+	{
+		auto object = (IPC_KV*)p;
+
+		object->destroy();
+	};
+
+	auto result = RegisterWaitForSingleObject(
+		&m_clear_wait_handle, 
+		m_clear_event_handle, 
+		clear_callback, 
+		this, 
+		INFINITE, 
+		WT_EXECUTEDEFAULT
+	);
+
+	if (!result)
+	{
+		throw std::exception("unable to register for event. " + GetLastError());
 	}
 }
 
-IPC_KV::IPC_Object* IPC_KV::get(const std::string & key)
+IPC_KV::~IPC_KV()
 {
+	UnregisterWait(m_clear_wait_handle);
+	CloseHandle(m_clear_event_handle);
+
+	std::lock_guard<std::mutex> guard(m_mutex);
+	for (auto it = m_buffers.cbegin(); it != m_buffers.cend();)
+	{
+		UnmapViewOfFile(it->second.first);
+		CloseHandle(it->second.second);
+
+		it = m_buffers.erase(it);
+	}
+}
+
+void IPC_KV::destroy()
+{
+	std::lock_guard<std::mutex> guard(m_mutex);
+	for (auto item : m_buffers)
+	{
+		if (item.second.first->size)
+		{
+			IPC_KV::IPC_WriteLock lock(m_lock_prefix + item.first);
+			item.second.first->size = 0;
+		}
+	}
+}
+
+void IPC_KV::clear()
+{
+	SetEvent(m_clear_event_handle);
+}
+
+IPC_KV::IPC_Value IPC_KV::get(const std::string & key)
+{
+	std::lock_guard<std::mutex> guard(m_mutex);
 	auto buffer = m_buffers.find(key);
 
 	if (buffer == m_buffers.end())
 	{
-		return get_handle(key);
+		return IPC_Value(key, get_handle(key));
 	}
 
-	return buffer->second;
+	return IPC_Value(key, buffer->second.first);
 }
 
-bool IPC_KV::set(const std::string& key, const uint8_t * value, const size_t len)
+void IPC_KV::set(const std::string& key, const std::string& value)
+{
+	set(key, (const uint8_t*)value.c_str(), value.length() + 1);
+}
+
+void IPC_KV::set(const std::string& key, const uint8_t * value, const size_t len)
 {
 	if (len > BLOCK_SIZE)
 	{
-		printf("Object too large.");
-		return false;
+		throw std::exception("object too large, increase block size");
 	}
 
 	auto ipc_object = get(key);
@@ -50,9 +118,7 @@ bool IPC_KV::set(const std::string& key, const uint8_t * value, const size_t len
 
 		if (map_file_handle == NULL)
 		{
-			printf("Could not create file mapping object: 0x%X\n", GetLastError());
-
-			return false;
+			throw std::exception("could not create file mapping object (set)");
 		}
 
 		auto buffer = MapViewOfFile(
@@ -65,47 +131,28 @@ bool IPC_KV::set(const std::string& key, const uint8_t * value, const size_t len
 
 		if (buffer == NULL)
 		{
-			printf("Could not map view of file: 0x%X\n", GetLastError());
-
 			CloseHandle(map_file_handle);
 
-			return false;
+			throw std::exception("could not map view of file. (set)");
 		}
 
+		////////////////////////////////////////////////
+
 		ipc_object = (IPC_Object*)buffer;
+
+		std::lock_guard<std::mutex> guard(m_mutex);
+		m_buffers[key] = std::make_pair(ipc_object, map_file_handle);
 	}
 
-	//////////////////////////////////////////
-	
-	auto mutex_name = m_mutex_prefix + key;
-
-	auto mutex_handle = CreateMutex(
-		NULL,
-		FALSE,
-		mutex_name.c_str()
-	);
-
-	if (mutex_handle == NULL)
-	{
-		printf("Could not create mutex: 0x%X\n", GetLastError());
-		return false;
-	}
-
-	//////////////////////////////////////////
+	IPC_KV::IPC_WriteLock lock(m_lock_prefix + key);
 
 	memcpy(ipc_object->buffer, value, len);
-	ipc_object->size = len;	
-
-	CloseHandle(mutex_handle);
-
-	return true;
+	ipc_object->size = len;
 }
 
 IPC_KV::IPC_Object* IPC_KV::get_handle(const std::string & key)
 {
-	std::string handle_path = m_handle_prefix + key;
-
-	/////////////////////////////////////////////////
+	auto handle_path = m_handle_prefix + key;
 	 
 	auto map_file_handle = OpenFileMapping(
 		FILE_MAP_ALL_ACCESS,
@@ -115,9 +162,10 @@ IPC_KV::IPC_Object* IPC_KV::get_handle(const std::string & key)
 
 	if (map_file_handle == NULL)
 	{
-		printf("Could not open file mapping object: 0x%X\n", GetLastError());
+		if (GetLastError() == ERROR_FILE_NOT_FOUND)
+			return nullptr;
 
-		return nullptr;
+		throw std::exception("could not open file mapping object. (get_handle)");
 	}
 
 	/////////////////////////////////////////////////
@@ -132,51 +180,42 @@ IPC_KV::IPC_Object* IPC_KV::get_handle(const std::string & key)
 
 	if (buffer == NULL)
 	{
-		printf("Could not map view of file: 0x%X\n", GetLastError());
-
-		return nullptr;
+		throw std::exception("could not map view of file. (get_handle)");
 	}
 
 	/////////////////////////////////////////////////
 
 	auto ipc_object = (IPC_Object*)buffer;
-
-	m_handles[key] = map_file_handle;
-	m_buffers[key] = ipc_object;
+	m_buffers[key] = std::make_pair(ipc_object, map_file_handle);
 
 	return ipc_object;
 }
 
-
 int main()
 {
-	IPC_KV kv("test");
-	IPC_KV kv2("test2");
+	auto kv = new IPC_KV("test");
 
-	const uint8_t lol[] = {
-		0x68, 0x69, 0x00
-	}; 
-
-	const uint8_t lol2[] = {
-		0x68, 0x69, 0x68, 0x00
-	};
-
+	std::thread lol([kv]() {
+		while (true) 
+		{
+			kv->set("lol", "hello world2");
+		} 
+	});
 	
-	kv.set("lol", lol, sizeof lol);
-	kv.set("lol", lol, sizeof lol);
-	kv2.set("lol", lol2, sizeof lol2);
+	std::thread lol3([kv]() {
+		while (true)
+		{
+			if (GetAsyncKeyState(VK_DELETE))
+				kv->clear();
 
-	auto object = kv.get("lol");
+			printf("%s\n", kv->get("lol") && kv->get("lol")->size ? (const char*)kv->get("lol")->buffer : "null");
+		}
+	}); 
 
-	if (object)
-		printf("%s\n", object->buffer);
-	else
-		printf("null\n");
-
-
-
-
-	system("pause");
+	lol.detach();
+	lol3.detach();
+	
+	Sleep(500000000);
 
 	return 0;
 }
