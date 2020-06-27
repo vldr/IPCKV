@@ -1,8 +1,7 @@
 #pragma once
 #include <Windows.h>
 #include <string>
-#include <unordered_map>
-#include <mutex>
+#include <iostream>
 
 #define LOG(...) printf(__VA_ARGS__)
 #define MAX_LOCKS 24
@@ -214,44 +213,3 @@ private:
 	HANDLE semaphore_handle = nullptr;
 	HANDLE mutex_handle = nullptr;
 };
-
-struct IPC_Object
-{
-
-
-	//size_t size = 0;
-	//uint8_t buffer[BLOCK_SIZE];
-};
-
-/*class IPC_Value {
-public:
-	IPC_Value(const std::string & key, const std::string& read_lock_name, IPC_Object* ipc_object)
-		: m_ipc_object(ipc_object), m_read_lock(read_lock_name) {}
-
-	IPC_Value(const IPC_Value&) = delete;
-	IPC_Value& operator=(IPC_Value const&) = delete;
-
-	IPC_Value(IPC_Value&& ipc_value) noexcept :
-		m_ipc_object(std::exchange(ipc_value.m_ipc_object, nullptr)),
-		m_read_lock(std::move(ipc_value.m_read_lock))
-	{ }
-
-	IPC_Value& operator=(IPC_Value&& ipc_value)
-	{
-		m_ipc_object = std::exchange(ipc_value.m_ipc_object, nullptr);
-		m_read_lock = std::move(ipc_value.m_read_lock);
-
-		return *this;
-	}
-
-	inline const uint8_t* buffer() {
-		return m_ipc_object ? m_ipc_object->buffer : nullptr;
-	}
-
-	inline size_t size() {
-		return m_ipc_object ? m_ipc_object->size : 0;
-	}
-private:
-	IPC_Object* m_ipc_object;
-	IPC_ReadLock m_read_lock;
-};*/
