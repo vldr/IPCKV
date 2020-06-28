@@ -74,17 +74,57 @@ public:
 	IPC_KV_Controller& operator=(const IPC_KV_Controller&) = delete;
 	IPC_KV_Controller& operator=(IPC_KV_Controller&&) = delete;
 
+
 	/**
 	* m_info Setters
 	*/
 
+	enum InfoTransaction
+	{
+		InfoNone = 0,
+		InfoResizeCount = (1 << 0),
+		InfoCapacity = (1 << 1),
+		InfoSize = (1 << 2),
+	};
+
+	/**
+	* Commit Info
+	*/
+	void commitInfo()
+	{
+		if (!m_info)
+			throw std::runtime_error("class is in an invalid state.");
+
+		if (!m_has_started_info_transaction)
+			throw std::runtime_error("a info transaction has not been started.");
+
+		/////////////////////////////////////////////////
+
+		if (!(m_info_transaction_flags & InfoTransaction::InfoResizeCount))
+			setResizeCount(getResizeCount());
+
+		if (!(m_info_transaction_flags & InfoTransaction::InfoCapacity))
+			setCapacity(getCapacity());
+
+		if (!(m_info_transaction_flags & InfoTransaction::InfoSize))
+			setSize(getSize());
+
+		/////////////////////////////////////////////////
+
+		m_info->m_buffer_state = !m_info->m_buffer_state;
+		m_has_started_info_transaction = false;
+	}
+
 	void startInfoTransaction()
 	{
-		setResizeCount(getResizeCount());
-		setCapacity(getCapacity());
-		setSize(getSize());
+		if (!m_info)
+			throw std::runtime_error("class is in an invalid state.");
 
-		has_started_info_transaction = true;
+		if (m_has_started_info_transaction)
+			throw std::runtime_error("a info transaction has already been started.");
+
+		m_has_started_info_transaction = true;
+		m_info_transaction_flags = InfoTransaction::InfoNone;
 	}
 
 	void setResizeCount(size_t resize_count)
@@ -92,7 +132,11 @@ public:
 		if (!m_info)
 			throw std::runtime_error("class is in an invalid state.");
 
+		if (!m_has_started_info_transaction)
+			throw std::runtime_error("a info transaction has not been started.");
+
 		m_info->m_resize_count[!m_info->m_buffer_state] = resize_count;
+		m_info_transaction_flags = (InfoTransaction)(m_info_transaction_flags | InfoTransaction::InfoResizeCount);
 	}
 
 	void setCapacity(size_t capacity)
@@ -100,7 +144,11 @@ public:
 		if (!m_info)
 			throw std::runtime_error("class is in an invalid state.");
 
+		if (!m_has_started_info_transaction)
+			throw std::runtime_error("a info transaction has not been started.");
+
 		m_info->m_capacity[!m_info->m_buffer_state] = capacity;
+		m_info_transaction_flags = (InfoTransaction)(m_info_transaction_flags | InfoTransaction::InfoCapacity);
 	}
 
 	void setSize(size_t size)
@@ -108,22 +156,68 @@ public:
 		if (!m_info)
 			throw std::runtime_error("class is in an invalid state.");
 
+		if (!m_has_started_info_transaction)
+			throw std::runtime_error("a info transaction has not been started.");
+
 		m_info->m_size[!m_info->m_buffer_state] = size;
+		m_info_transaction_flags = (InfoTransaction)(m_info_transaction_flags | InfoTransaction::InfoSize);
 	}
 
 	/** 
 	* m_Data Setters
 	*/
 
+	enum DataTransaction
+	{
+		DataNone = 0,
+		DataState = (1 << 0),
+		DataKey = (1 << 1),
+		DataValue = (1 << 2),
+		DataSize = (1 << 3),
+	};
+
+	/**
+	* Commit Data
+	*/
+	void commitData(size_t index)
+	{
+		if (!m_data)
+			throw std::runtime_error("class is in an invalid state.");
+
+		if (!m_has_started_data_transaction)
+			throw std::runtime_error("a data transaction has not been started.");
+
+		/////////////////////////////////////////////////
+
+		if (!(m_data_transaction_flags & DataTransaction::DataSize))
+			setDataSize(index, getDataSize(index));
+
+		if (!(m_data_transaction_flags & DataTransaction::DataState))
+			setDataState(index, getDataState(index));
+
+		if (!(m_data_transaction_flags & DataTransaction::DataValue))
+			setData(index, getData(index), getDataSize(index));
+
+		if (!(m_data_transaction_flags & DataTransaction::DataKey))
+			setDataKey(index, getDataKey(index), strlen(getDataKey(index)));
+
+		/////////////////////////////////////////////////
+
+		m_data[index].m_buffer_state = !m_data[index].m_buffer_state;
+		m_has_started_data_transaction = false;
+	}
+
 	void startDataTransaction(size_t index)
 	{
-		setDataSize(index, getDataSize(index));
-		setDataState(index, getDataState(index));
-		setData(index, getData(index), getDataSize(index));
-		setDataKey(index, getDataKey(index), strlen(getDataKey(index)));
+		if (!m_data)
+			throw std::runtime_error("class is in an invalid state.");
 
-		has_started_data_transaction = true;
-	}
+		if (m_has_started_data_transaction)
+			throw std::runtime_error("a data transaction has already been started.");
+
+		m_has_started_data_transaction = true;
+		m_data_transaction_flags = DataTransaction::DataNone;
+	} 
 
 	void setDataSize(size_t index, size_t size)
 	{
@@ -133,6 +227,7 @@ public:
 		bool buffer_state = !m_data[index].m_buffer_state;
 
 		m_data[index].m_size[buffer_state] = size;
+		m_data_transaction_flags = (DataTransaction)(m_data_transaction_flags | DataTransaction::DataSize);
 	}
 
 	void setDataState(size_t index, IPC_KV_Data_State state)
@@ -143,6 +238,7 @@ public:
 		bool buffer_state = !m_data[index].m_buffer_state;
 
 		m_data[index].m_state[buffer_state] = state;
+		m_data_transaction_flags = (DataTransaction)(m_data_transaction_flags | DataTransaction::DataState);
 	}
 
 	void setData(size_t index, unsigned char* data, size_t size)
@@ -154,6 +250,9 @@ public:
 
 		memcpy_s(m_data[index].m_value[buffer_state], DATA_SIZE, data, size);
 		m_data[index].m_size[buffer_state] = size;
+
+		m_data_transaction_flags = (DataTransaction)(m_data_transaction_flags | DataTransaction::DataValue);
+		m_data_transaction_flags = (DataTransaction)(m_data_transaction_flags | DataTransaction::DataSize);
 	}
 
 	void setDataKey(size_t index, const char* key, size_t size)
@@ -164,6 +263,8 @@ public:
 		bool buffer_state = !m_data[index].m_buffer_state;
 
 		strncpy_s(m_data[index].m_key[buffer_state], key, size);
+
+		m_data_transaction_flags = (DataTransaction)(m_data_transaction_flags | DataTransaction::DataKey);
 	}
 
 	/**
@@ -238,35 +339,11 @@ public:
 		return m_data[index].m_key[buffer_state];
 	}
 
-	/**
-	* Commit Info
-	*/
-	void commitInfo() 
-	{
-		if (!m_info)
-			throw std::runtime_error("class is in an invalid state.");
+	bool m_has_started_info_transaction = false;
+	InfoTransaction m_info_transaction_flags = InfoTransaction::InfoNone;
 
-		if (!has_started_info_transaction)
-			throw std::runtime_error("a info transaction has not been started.");
-
-		m_info->m_buffer_state = !m_info->m_buffer_state;
-	}
-	/**
-	* Commit Data
-	*/
-	void commitData(size_t index)
-	{
-		if (!m_data)
-			throw std::runtime_error("class is in an invalid state.");
-
-		if (!has_started_data_transaction)
-			throw std::runtime_error("a data transaction has not been started.");
-
-		m_data[index].m_buffer_state = !m_data[index].m_buffer_state;
-	}
-
-	bool has_started_info_transaction = false;
-	bool has_started_data_transaction = false;
+	bool m_has_started_data_transaction = false;
+	DataTransaction m_data_transaction_flags = DataTransaction::DataNone;
 
 	IPC_KV_Info* m_info = nullptr;
 	IPC_KV_Data* m_data = nullptr;

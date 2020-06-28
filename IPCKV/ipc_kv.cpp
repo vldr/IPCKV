@@ -1,5 +1,7 @@
 #include "ipc_kv.h"
 
+bool should_crash = false;
+
 IPC_KV::IPC_KV(const std::string& name)
 {
 	m_name = name;
@@ -172,7 +174,7 @@ void IPC_KV::set_internal(const std::string& key, unsigned char* data, size_t si
 
 	uint32_t capacity = m_controller->getCapacity();
 
-	uint32_t hashCode = hash(key.c_str(), key.length());
+	uint32_t hashCode = hash(key.c_str(), key.length()); 
 	uint32_t bucket = hashCode % capacity; 
 
 	while (bucketsProbed < m_controller->getCapacity())
@@ -183,6 +185,10 @@ void IPC_KV::set_internal(const std::string& key, unsigned char* data, size_t si
 			{
 				m_controller->startInfoTransaction();
 				m_controller->setSize(m_controller->getSize() + 1);
+
+				if (should_crash)
+					exit(0);
+
 				m_controller->commitInfo();
 			}
 
@@ -220,9 +226,11 @@ void IPC_KV::print()
 			printf("[%d] %s 0x%X\n", i, m_controller->getDataKey(i), m_controller->getDataSize(i));
 	}
 
-	printf("Capacity %d, Size %d, Resizes %d, Load Factor %f\n", 
+	printf("Capacity %d, Actual Size %d, Size (1) %d, Size (2) %d, Resizes %d, Load Factor %f\n", 
 		m_controller->getCapacity(), 
-		m_controller->getSize(), 
+		m_controller->getSize(),
+		m_controller->m_info->m_size[0],
+		m_controller->m_info->m_size[1], 
 		m_controller->getResizeCount(), 
 		LOAD_FACTOR
 	);
@@ -233,20 +241,7 @@ IPC_Lock IPC_KV::get_lock(bool is_writing)
 {
 	IPC_Lock lock(is_writing, m_name);
 
-	/*if (m_cached_resize_count != m_info->resize_count)
-	{
-		printf("Capacity has changed, fetching new memory\n");
-
-		if (m_data)
-			UnmapViewOfFile(m_data);
-
-		if (m_data_handle)
-			CloseHandle(m_data_handle);
-
-		initialize_data(m_name);
-
-		m_cached_resize_count = m_info->resize_count;
-	}*/
+	
 
 	return lock;
 }
@@ -254,37 +249,13 @@ IPC_Lock IPC_KV::get_lock(bool is_writing)
 void IPC_KV::resize()
 {
 	printf("Resizing memory.\n");
-
-	/*HANDLE previous_data_handle = m_data_handle;
-	IPC_KV_Data* previous_data = m_data;
-	size_t previous_capacity = m_info->capacity;
-
-	m_info->resize_count++;
-	m_info->size = 0;
-	m_info->capacity = find_nearest_prime(m_info->capacity * 2);
-
-	initialize_data(m_name);
-
-	m_cached_resize_count = m_info->resize_count;
-	
-	for (size_t i = 0; i < previous_capacity; i++)
-	{
-		if (previous_data[i].state == IPC_KV_Data_State::Occupied)
-		{
-			set_internal(previous_data[i].key, previous_data[i].data, previous_data[i].size);
-		}
-	}
-
-	if (previous_data)
-		UnmapViewOfFile(previous_data);
-
-	if (previous_data_handle)
-		CloseHandle(previous_data_handle);	*/
 }
 
 size_t IPC_KV::size()
 {
 	auto lock = get_lock(READ_LOCK);
+
+	////////////////////////////////////////////////////
 
 	return m_controller->getSize();
 }
@@ -344,6 +315,11 @@ int main()
 		{
 			printf("Inserting %s\n", key.c_str());
 			kv.set(key, dummy_data, sizeof(dummy_data));
+		}
+		else
+		{ 
+			should_crash = !should_crash;
+			printf("Will crash %s\n", should_crash ? "YUP BABYE" : "no");
 		}
 
 		kv.print();
