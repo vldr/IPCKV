@@ -7,8 +7,20 @@ IPC_KV::IPC_KV(const std::string& name)
 	m_name = name;
 	m_controller = new IPC_KV_Controller();
 
+	//////////////////////////////////////
+
 	initialize_info(m_name);
-	initialize_data(m_name); 
+
+	//////////////////////////////////////
+
+	auto data_tuple = initialize_data(
+		m_name, 
+		m_controller->getCapacity(), 
+		m_controller->getResizeCount()
+	); 
+
+	m_controller->m_data = std::get<0>(data_tuple);
+	m_controller->m_data_handle = std::get<1>(data_tuple);
 }
 
 IPC_KV::~IPC_KV()
@@ -74,23 +86,19 @@ void IPC_KV::initialize_info(const std::string& name)
 
 		m_controller->m_info->m_buffer_state = false;
 
-		m_controller->m_info->m_size[0] = 0;
-		m_controller->m_info->m_size[1] = 0;
-
-		m_controller->m_info->m_resize_count[0] = 0;
-		m_controller->m_info->m_resize_count[1] = 0;
-
-		m_controller->m_info->m_capacity[0] = INITIAL_CAPACITY;
-		m_controller->m_info->m_capacity[1] = INITIAL_CAPACITY;
+		m_controller->startInfoTransaction();
+		m_controller->setSize(0);
+		m_controller->setResizeCount(0);
+		m_controller->setCapacity(INITIAL_CAPACITY);
+		m_controller->commitInfo();
 	}
 
 	m_resize_count = m_controller->getResizeCount();
 }
 
-void IPC_KV::initialize_data(const std::string& name)
+std::tuple<IPC_KV_Data*, HANDLE> IPC_KV::initialize_data(const std::string& name, size_t capacity, size_t resize_count)
 {
-	auto allocation_size = sizeof(IPC_KV_Data) * m_controller->getCapacity();
-	auto resize_count = m_controller->getResizeCount();
+	auto allocation_size = sizeof(IPC_KV_Data) * capacity;
 
 	///////////////////////////////////////////
 
@@ -138,17 +146,14 @@ void IPC_KV::initialize_data(const std::string& name)
 
 	///////////////////////////////////////////
 
-	m_controller->m_data = (IPC_KV_Data*)buffer;
-	m_controller->m_data_handle = data_handle;
-
-	///////////////////////////////////////////
-
 	if (!does_already_exist)
 	{
 		printf("Initializing data %s...\n", handle_path.c_str());
 
-		std::memset(m_controller->m_data, 0, allocation_size);
+		std::memset(buffer, 0, allocation_size);
 	}
+
+	return std::make_tuple((IPC_KV_Data*)buffer, data_handle);
 }
 
 void IPC_KV::set(const std::string& key, unsigned char* data, size_t size)
@@ -183,12 +188,8 @@ void IPC_KV::set_internal(const std::string& key, unsigned char* data, size_t si
 		{ 
 			if (m_controller->getDataState(bucket) != IPC_KV_Data_State::Occupied)
 			{
-				m_controller->startInfoTransaction();
+				m_controller->startInfoTransaction(); 
 				m_controller->setSize(m_controller->getSize() + 1);
-
-				if (should_crash)
-					exit(0);
-
 				m_controller->commitInfo();
 			}
 
@@ -226,29 +227,109 @@ void IPC_KV::print()
 			printf("[%d] %s 0x%X\n", i, m_controller->getDataKey(i), m_controller->getDataSize(i));
 	}
 
-	printf("Capacity %d, Actual Size %d, Size (1) %d, Size (2) %d, Resizes %d, Load Factor %f\n", 
+	printf("Capacity %d, Size %d, Resizes %d, Load Factor %f\n", 
 		m_controller->getCapacity(), 
 		m_controller->getSize(),
-		m_controller->m_info->m_size[0],
-		m_controller->m_info->m_size[1], 
 		m_controller->getResizeCount(), 
 		LOAD_FACTOR
 	);
 }
-
+ 
 
 IPC_Lock IPC_KV::get_lock(bool is_writing)
 {
 	IPC_Lock lock(is_writing, m_name);
+	 
+	if (m_resize_count != m_controller->getResizeCount())
+	{ 
+		printf("Expired memory, fetching new memory.\n");
 
-	
+		UnmapViewOfFile(m_controller->m_data);
+		CloseHandle(m_controller->m_data_handle);
+
+		auto data_tuple = initialize_data(
+			m_name,
+			m_controller->getCapacity(),
+			m_controller->getResizeCount()
+		);
+
+		m_controller->m_data = std::get<0>(data_tuple);
+		m_controller->m_data_handle = std::get<1>(data_tuple);
+		m_resize_count = m_controller->getResizeCount();
+	}
 
 	return lock;
 }
 
 void IPC_KV::resize()
-{
+{  
 	printf("Resizing memory.\n");
+
+	//////////////////////////////////////////
+
+	auto new_capacity = find_nearest_prime(m_controller->getCapacity() * 2);
+	auto new_resize_count = m_controller->getResizeCount() + 1;
+
+	m_controller->startInfoTransaction();
+	m_controller->setCapacity(new_capacity);
+	m_controller->setResizeCount(new_resize_count);
+
+	//////////////////////////////////////////
+
+	IPC_KV_Controller temp_controller{};
+
+	auto new_data_tuple = initialize_data(m_name, new_capacity, new_resize_count);
+	temp_controller.m_data = std::get<0>(new_data_tuple);
+	temp_controller.m_data_handle = std::get<1>(new_data_tuple);
+
+	for (size_t i = 0; i < m_controller->getCapacity(); i++)
+	{
+		if (m_controller->getDataState(i) != IPC_KV_Data_State::Occupied)
+			continue;  
+
+		auto key = m_controller->getDataKey(i);
+		auto keyLength = strlen(key);
+
+		auto data = m_controller->getData(i);
+		auto data_size = m_controller->getDataSize(i);
+
+		/////////////////////////////////////////////////////
+
+		uint32_t probeIndex = 0;
+		uint32_t bucketsProbed = 0;
+
+		uint32_t hashCode = hash(key, keyLength);
+		uint32_t bucket = hashCode % new_capacity;
+
+		while (bucketsProbed < new_capacity)
+		{
+			if (temp_controller.getDataState(bucket) != IPC_KV_Data_State::Occupied || temp_controller.getDataKey(bucket) == key)
+			{
+				temp_controller.startDataTransaction(bucket);
+				temp_controller.setDataKey(bucket, key, keyLength);
+				temp_controller.setData(bucket, data, data_size);
+				temp_controller.setDataState(bucket, IPC_KV_Data_State::Occupied);
+				temp_controller.commitData(bucket);
+
+				break;
+			}
+
+			probeIndex++;
+
+			bucket = (hashCode + C1_CONSTANT * probeIndex + C2_CONSTANT * probeIndex * probeIndex) % new_capacity;
+			bucketsProbed++;
+		}
+
+		if (bucketsProbed >= new_capacity)
+			throw std::runtime_error("unable to resize item due to unexpected error");
+	}
+	 
+	m_controller->commitInfo();
+
+	std::swap(m_controller->m_data, temp_controller.m_data);
+	std::swap(m_controller->m_data_handle, temp_controller.m_data_handle);
+
+	m_resize_count = new_resize_count;
 }
 
 size_t IPC_KV::size()
@@ -300,18 +381,46 @@ uint32_t IPC_KV::hash(const char * key, int count)
 	return h ^ (h >> 16);
 }
 
+#include <random>
+#include <string>
+
 int main()
 {
+	auto random_string = [](size_t length) -> std::string
+	{
+		static auto& chrs = "0123456789"
+			"abcdefghijklmnopqrstuvwxyz"
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+		thread_local static std::mt19937 rg{ std::random_device{}() };
+		thread_local static std::uniform_int_distribution<std::string::size_type> pick(0, sizeof(chrs) - 2);
+
+		std::string s;
+
+		s.reserve(length);
+
+		while (length--)
+			s += chrs[pick(rg)];
+
+		return s;
+	};
+
+
 	unsigned char dummy_data[] = { 0x68, 0x69 };
 	auto kv = IPC_KV("test");
 
 	while (1)
 	{
-		std::string key;
+		if (GetAsyncKeyState(VK_DELETE))
+		{
+			std::string key = random_string(24);
 
-		getline(std::cin, key);
+			kv.set(key, dummy_data, sizeof(dummy_data));
+		}
 
-		if (!key.empty())
+		
+
+		/*if (!key.empty())
 		{
 			printf("Inserting %s\n", key.c_str());
 			kv.set(key, dummy_data, sizeof(dummy_data));
@@ -320,7 +429,7 @@ int main()
 		{ 
 			should_crash = !should_crash;
 			printf("Will crash %s\n", should_crash ? "YUP BABYE" : "no");
-		}
+		}*/
 
 		kv.print();
 	}

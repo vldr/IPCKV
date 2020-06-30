@@ -2,12 +2,13 @@
 #include <Windows.h>
 #include <string>
 #include <iostream>
+#include <tuple>
 
 #define LOG(...) printf(__VA_ARGS__)
 #define MAX_LOCKS 24
 
 #define MAX_LOAD_FACTOR 0.6f
-#define INITIAL_CAPACITY 10
+#define INITIAL_CAPACITY 11
 #define DATA_SIZE 2048
 #define KEY_SIZE 260
 
@@ -372,7 +373,8 @@ private:
 	* Private Methods
 	*/
 	void initialize_info(const std::string& name);
-	void initialize_data(const std::string& name);
+	std::tuple<IPC_KV_Data*, HANDLE> initialize_data(const std::string& name, size_t capacity, size_t resize_count);
+
 	void resize();
 	void set_internal(const std::string& key, unsigned char* data, size_t size);
 	bool is_prime(size_t input);
