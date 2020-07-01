@@ -81,12 +81,12 @@ struct IPC_KV_Data
 
 	size_t m_size[2];
 
-	bool m_buffer_state;
+	char m_buffer_state;
 };
 
 struct IPC_KV_Info
 {
-	bool m_buffer_state;
+	char m_buffer_state;
 	size_t m_capacity[2];
 	size_t m_size[2];
 	size_t m_resize_count[2];
@@ -155,7 +155,8 @@ public:
 
 		/////////////////////////////////////////////////
 
-		m_info->m_buffer_state = !m_info->m_buffer_state;
+		InterlockedXor8(&m_info->m_buffer_state, 0b00000001);
+
 		m_has_started_info_transaction = false;
 	}
 
@@ -245,9 +246,10 @@ public:
 		if (!(m_data_transaction_flags & DataTransaction::DataKey))
 			setDataKey(index, getDataKey(index), strlen(getDataKey(index)));
 
-		/////////////////////////////////////////////////
+		///////////////////////////////////////////////// 
 
-		m_data[index].m_buffer_state = !m_data[index].m_buffer_state;
+		InterlockedXor8(&m_data[index].m_buffer_state, 0b00000001);
+
 		m_has_started_data_transaction = false;
 	}
 

@@ -106,7 +106,7 @@ std::tuple<IPC_KV_Data*, HANDLE> IPC_KV::initialize_data(const std::string& name
 
 	if (handle_path.length() > MAX_PATH)
 	{
-		throw std::runtime_error("key is too long.");
+		throw std::runtime_error("key is too long."); 
 	}
 
 	///////////////////////////////////////////
@@ -512,29 +512,11 @@ int main()
 	SetConsoleTitleA(title.c_str());
 
 	unsigned char dummy_data[] = { 0x68, 0x69 };
-	auto kv = IPC_KV("test");
+	
 
 
 	try {
-		/*while (1)
-		{
-			if (GetAsyncKeyState(VK_DELETE))
-			{
-				std::string key = random_string(24);
-
-				kv.set(key, dummy_data, sizeof(dummy_data));
-
-				printf("Written\n");
-				//kv.print();  
-			}
-
-			if (GetAsyncKeyState(VK_INSERT)) 
-			{
-				kv.print();
-			}
-		}*/
-
-
+		auto kv = IPC_KV("test");
 		kv.set("Hello World", dummy_data, sizeof(dummy_data));
 		kv.set("How are you?", dummy_data, sizeof(dummy_data));
 		kv.print();
@@ -559,7 +541,7 @@ int main()
 		printf("Finding EFG 0x%X\n", kv.get("EFG", dummy_callback_data, dummy_callback_size));
 
 		kv.print();
-
+		printf("Finished execution, %d\n", kv.size());
 	}
 	catch (std::runtime_error & ex)
 	{
@@ -567,7 +549,7 @@ int main()
 	}
 	
 
-	printf("Finished execution, %d\n", kv.size());
+	
 
 	
 	Sleep(500000000);
