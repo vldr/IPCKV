@@ -517,8 +517,8 @@ int main()
 
 	try {
 		auto kv = IPC_KV("test");
-		kv.set("Hello World", dummy_data, sizeof(dummy_data));
 		kv.set("How are you?", dummy_data, sizeof(dummy_data));
+		kv.set("Hello World", dummy_data, sizeof(dummy_data));
 		kv.print();
 
 		kv.remove("Hello World");
@@ -548,9 +548,6 @@ int main()
 		printf("Exception %s LastError %X\n", ex.what(), GetLastError());
 	}
 	
-
-	
-
 	
 	Sleep(500000000);
 

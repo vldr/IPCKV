@@ -20,6 +20,8 @@
 #define IPCKV_READ_LOCK false
 #define IPCKV_WRITE_LOCK true
 
+#define IPCKV_BIT_HIGH 0b00000001
+
 class IPC_Lock;
 class IPC_KV_Controller;
 struct IPC_KV_Data;
@@ -155,7 +157,7 @@ public:
 
 		/////////////////////////////////////////////////
 
-		InterlockedXor8(&m_info->m_buffer_state, 0b00000001);
+		InterlockedXor8(&m_info->m_buffer_state, IPCKV_BIT_HIGH);
 
 		m_has_started_info_transaction = false;
 	}
@@ -180,7 +182,9 @@ public:
 		if (!m_has_started_info_transaction)
 			throw std::runtime_error("a info transaction has not been started.");
 
-		m_info->m_resize_count[!m_info->m_buffer_state] = resize_count;
+		bool buffer_state = !InterlockedAnd8(&m_info->m_buffer_state, IPCKV_BIT_HIGH);
+
+		m_info->m_resize_count[buffer_state] = resize_count;
 		m_info_transaction_flags = (InfoTransaction)(m_info_transaction_flags | InfoTransaction::InfoResizeCount);
 	}
 
@@ -192,7 +196,9 @@ public:
 		if (!m_has_started_info_transaction)
 			throw std::runtime_error("a info transaction has not been started.");
 
-		m_info->m_capacity[!m_info->m_buffer_state] = capacity;
+		bool buffer_state = !InterlockedAnd8(&m_info->m_buffer_state, IPCKV_BIT_HIGH);
+
+		m_info->m_capacity[buffer_state] = capacity;
 		m_info_transaction_flags = (InfoTransaction)(m_info_transaction_flags | InfoTransaction::InfoCapacity);
 	}
 
@@ -204,7 +210,9 @@ public:
 		if (!m_has_started_info_transaction)
 			throw std::runtime_error("a info transaction has not been started.");
 
-		m_info->m_size[!m_info->m_buffer_state] = size;
+		bool buffer_state = !InterlockedAnd8(&m_info->m_buffer_state, IPCKV_BIT_HIGH);
+
+		m_info->m_size[buffer_state] = size;
 		m_info_transaction_flags = (InfoTransaction)(m_info_transaction_flags | InfoTransaction::InfoSize);
 	}
 
@@ -248,7 +256,7 @@ public:
 
 		///////////////////////////////////////////////// 
 
-		InterlockedXor8(&m_data[index].m_buffer_state, 0b00000001);
+		InterlockedXor8(&m_data[index].m_buffer_state, IPCKV_BIT_HIGH);
 
 		m_has_started_data_transaction = false;
 	}
@@ -270,7 +278,7 @@ public:
 		if (!m_data)
 			throw std::runtime_error("class is in an invalid state.");
 
-		bool buffer_state = !m_data[index].m_buffer_state;
+		bool buffer_state = !InterlockedAnd8(&m_data[index].m_buffer_state, IPCKV_BIT_HIGH);
 
 		m_data[index].m_size[buffer_state] = size;
 		m_data_transaction_flags = (DataTransaction)(m_data_transaction_flags | DataTransaction::DataSize);
@@ -281,7 +289,7 @@ public:
 		if (!m_data)
 			throw std::runtime_error("class is in an invalid state.");
 
-		bool buffer_state = !m_data[index].m_buffer_state;
+		bool buffer_state = !InterlockedAnd8(&m_data[index].m_buffer_state, IPCKV_BIT_HIGH);
 
 		m_data[index].m_state[buffer_state] = state;
 		m_data_transaction_flags = (DataTransaction)(m_data_transaction_flags | DataTransaction::DataState);
@@ -292,7 +300,7 @@ public:
 		if (!m_data)
 			throw std::runtime_error("class is in an invalid state.");
 
-		bool buffer_state = !m_data[index].m_buffer_state;
+		bool buffer_state = !InterlockedAnd8(&m_data[index].m_buffer_state, IPCKV_BIT_HIGH);
 
 		memcpy_s(m_data[index].m_value[buffer_state], IPCKV_DATA_SIZE, data, size);
 		m_data[index].m_size[buffer_state] = size;
@@ -306,7 +314,7 @@ public:
 		if (!m_data)
 			throw std::runtime_error("class is in an invalid state.");
 
-		bool buffer_state = !m_data[index].m_buffer_state;
+		bool buffer_state = !InterlockedAnd8(&m_data[index].m_buffer_state, IPCKV_BIT_HIGH);
 
 		strncpy_s(m_data[index].m_key[buffer_state], key, size);
 
@@ -322,7 +330,9 @@ public:
 		if (!m_info)
 			throw std::runtime_error("class is in an invalid state.");
 
-		return m_info->m_capacity[m_info->m_buffer_state];
+		bool buffer_state = InterlockedAnd8(&m_info->m_buffer_state, IPCKV_BIT_HIGH);
+
+		return m_info->m_capacity[buffer_state];
 	}
 
 	size_t getSize()
@@ -330,7 +340,9 @@ public:
 		if (!m_info)
 			throw std::runtime_error("class is in an invalid state.");
 
-		return m_info->m_size[m_info->m_buffer_state];
+		bool buffer_state = InterlockedAnd8(&m_info->m_buffer_state, IPCKV_BIT_HIGH);
+
+		return m_info->m_size[buffer_state];
 	}
 
 	size_t getResizeCount()
@@ -338,7 +350,9 @@ public:
 		if (!m_info)
 			throw std::runtime_error("class is in an invalid state.");
 
-		return m_info->m_resize_count[m_info->m_buffer_state];
+		bool buffer_state = InterlockedAnd8(&m_info->m_buffer_state, IPCKV_BIT_HIGH);
+
+		return m_info->m_resize_count[buffer_state];
 	}
 
 	/**
@@ -350,7 +364,7 @@ public:
 		if (!m_data)
 			throw std::runtime_error("class is in an invalid state.");
 
-		bool buffer_state = m_data[index].m_buffer_state;
+		bool buffer_state = InterlockedAnd8(&m_data[index].m_buffer_state, IPCKV_BIT_HIGH);
 
 		return m_data[index].m_value[buffer_state];
 	}
@@ -360,7 +374,7 @@ public:
 		if (!m_data)
 			throw std::runtime_error("class is in an invalid state.");
 
-		bool buffer_state = m_data[index].m_buffer_state;
+		bool buffer_state = InterlockedAnd8(&m_data[index].m_buffer_state, IPCKV_BIT_HIGH);
 
 		return m_data[index].m_size[buffer_state];
 	}
@@ -370,7 +384,7 @@ public:
 		if (!m_data)
 			throw std::runtime_error("class is in an invalid state.");
 
-		bool buffer_state = m_data[index].m_buffer_state;
+		bool buffer_state = InterlockedAnd8(&m_data[index].m_buffer_state, IPCKV_BIT_HIGH);
 
 		return m_data[index].m_state[buffer_state];
 	}
@@ -380,7 +394,7 @@ public:
 		if (!m_data)
 			throw std::runtime_error("class is in an invalid state.");
 
-		bool buffer_state = m_data[index].m_buffer_state;
+		bool buffer_state = InterlockedAnd8(&m_data[index].m_buffer_state, IPCKV_BIT_HIGH);
 
 		return m_data[index].m_key[buffer_state];
 	}
