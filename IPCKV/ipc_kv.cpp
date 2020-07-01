@@ -82,14 +82,14 @@ void IPC_KV::initialize_info(const std::string& name)
 
 	if (!does_already_exist)
 	{
-		printf("Initializing info %s...\n", handle_path.c_str());
+		LOG("Initializing info %s...\n", handle_path.c_str());
 
 		m_controller->m_info->m_buffer_state = false;
 
 		m_controller->startInfoTransaction();
 		m_controller->setSize(0);
 		m_controller->setResizeCount(0);
-		m_controller->setCapacity(INITIAL_CAPACITY);
+		m_controller->setCapacity(IPCKV_INITIAL_CAPACITY);
 		m_controller->commitInfo();
 	}
 
@@ -148,7 +148,7 @@ std::tuple<IPC_KV_Data*, HANDLE> IPC_KV::initialize_data(const std::string& name
 
 	if (!does_already_exist)
 	{
-		printf("Initializing data %s...\n", handle_path.c_str());
+		LOG("Initializing data %s...\n", handle_path.c_str());
 
 		std::memset(buffer, 0, allocation_size);
 	}
@@ -156,22 +156,120 @@ std::tuple<IPC_KV_Data*, HANDLE> IPC_KV::initialize_data(const std::string& name
 	return std::make_tuple((IPC_KV_Data*)buffer, data_handle);
 }
 
-void IPC_KV::set(const std::string& key, unsigned char* data, size_t size)
+void IPC_KV::clear()
 {
-	auto lock = get_lock(WRITE_LOCK);
+	auto lock = get_lock(IPCKV_WRITE_LOCK);
 
-	if (size >= DATA_SIZE)
-		throw std::runtime_error("data size is too big");
+	auto capacity = m_controller->getCapacity();
 
-	if (key.length() >= KEY_SIZE - 1)
-		throw std::runtime_error("key size is too big");
+	for (size_t i = 0; i < capacity; i++)
+	{
+		if (m_controller->getDataState(i) == IPC_KV_Data_State::Occupied)
+		{
+			m_controller->startDataTransaction(i);
+			m_controller->setDataState(i, IPC_KV_Data_State::Deleted);
+			m_controller->commitData(i);
 
-	set_internal(key, data, size);
+			m_controller->startInfoTransaction();
+			m_controller->setSize(m_controller->getSize() - 1);
+			m_controller->commitInfo();
+		}
+	}
 }
 
-void IPC_KV::set_internal(const std::string& key, unsigned char* data, size_t size)
+bool IPC_KV::remove(const std::string& key)
 {
-	if (LOAD_FACTOR >= MAX_LOAD_FACTOR)
+	auto lock = get_lock(IPCKV_WRITE_LOCK);
+
+	uint32_t probeIndex = 0;
+	uint32_t bucketsProbed = 0;
+
+	uint32_t capacity = m_controller->getCapacity();
+
+	uint32_t hashCode = hash(key.c_str(), key.length());
+	uint32_t bucket = hashCode % capacity;
+
+	while (bucketsProbed < m_controller->getCapacity())
+	{
+		if (m_controller->getDataState(bucket) == IPC_KV_Data_State::Empty)
+		{
+			return false;
+		}
+
+		if (
+			m_controller->getDataState(bucket) == IPC_KV_Data_State::Occupied
+			&& m_controller->getDataKey(bucket) == key
+			)
+		{
+			m_controller->startDataTransaction(bucket);
+			m_controller->setDataState(bucket, IPC_KV_Data_State::Deleted);
+			m_controller->commitData(bucket);
+
+			m_controller->startInfoTransaction();
+			m_controller->setSize(m_controller->getSize() - 1);
+			m_controller->commitInfo();
+
+			return true;
+		}
+
+		probeIndex++;
+
+		bucket = (hashCode + IPCKV_C1_CONSTANT * probeIndex + IPCKV_C2_CONSTANT * probeIndex * probeIndex) % capacity;
+		bucketsProbed++;
+	}
+
+	return false;
+}
+
+bool IPC_KV::get(const std::string& key, unsigned char* data, size_t & size)
+{
+	auto lock = get_lock(IPCKV_READ_LOCK);
+
+	uint32_t probeIndex = 0;
+	uint32_t bucketsProbed = 0;
+
+	uint32_t capacity = m_controller->getCapacity();
+
+	uint32_t hashCode = hash(key.c_str(), key.length());
+	uint32_t bucket = hashCode % capacity;
+
+	while (bucketsProbed < m_controller->getCapacity())
+	{
+		if (m_controller->getDataState(bucket) == IPC_KV_Data_State::Empty)
+		{
+			return false;
+		}
+
+		if (
+			m_controller->getDataState(bucket) == IPC_KV_Data_State::Occupied 
+			&& m_controller->getDataKey(bucket) == key
+		)
+		{
+			size = m_controller->getDataSize(bucket);
+
+			return memcpy_s(data, IPCKV_DATA_SIZE, m_controller->getData(bucket), size) == 0;
+		}
+
+		probeIndex++;
+
+		bucket = (hashCode + IPCKV_C1_CONSTANT * probeIndex + IPCKV_C2_CONSTANT * probeIndex * probeIndex) % capacity;
+		bucketsProbed++;
+	}
+
+	return false;
+}
+
+void IPC_KV::set(const std::string& key, unsigned char* data, size_t size)
+{
+	auto lock = get_lock(IPCKV_WRITE_LOCK);
+
+	if (size >= IPCKV_DATA_SIZE)
+		throw std::runtime_error("data size is too big");
+
+	if (key.length() >= IPCKV_KEY_SIZE - 1)
+		throw std::runtime_error("key size is too big");
+
+	if (IPCKV_LOAD_FACTOR >= IPCKV_MAX_LOAD_FACTOR)
 		resize();
 	 
 	uint32_t probeIndex = 0;
@@ -202,11 +300,11 @@ void IPC_KV::set_internal(const std::string& key, unsigned char* data, size_t si
 			return;
 		}
 
-		printf("Collision! %s -> %d\n", key.c_str(), bucket);
+		LOG("Collision! %s -> %d\n", key.c_str(), bucket);
 
 		probeIndex++;
 
-		bucket = (hashCode + C1_CONSTANT * probeIndex + C2_CONSTANT * probeIndex * probeIndex) % capacity;
+		bucket = (hashCode + IPCKV_C1_CONSTANT * probeIndex + IPCKV_C2_CONSTANT * probeIndex * probeIndex) % capacity;
 		bucketsProbed++;
 	}
 
@@ -215,7 +313,7 @@ void IPC_KV::set_internal(const std::string& key, unsigned char* data, size_t si
 
 void IPC_KV::print()
 {
-	auto lock = get_lock(READ_LOCK);
+	auto lock = get_lock(IPCKV_READ_LOCK);
 
 	////////////////////////////////////////////////////
 
@@ -224,14 +322,17 @@ void IPC_KV::print()
 	for (size_t i = 0; i < capacity; i++)
 	{
 		if (m_controller->getDataState(i) == IPC_KV_Data_State::Occupied)
-			printf("[%d] %s 0x%X\n", i, m_controller->getDataKey(i), m_controller->getDataSize(i));
+			LOG("[%d] %s 0x%X\n", i, m_controller->getDataKey(i), m_controller->getDataSize(i));
+
+		if (m_controller->getDataState(i) == IPC_KV_Data_State::Deleted)
+			LOG("[%d] Deleted\n", i);
 	}
 
-	printf("Capacity %d, Size %d, Resizes %d, Load Factor %f\n", 
+	LOG("Capacity %d, Size %d, Resizes %d, Load Factor %f\n",
 		m_controller->getCapacity(), 
 		m_controller->getSize(),
 		m_controller->getResizeCount(), 
-		LOAD_FACTOR
+		IPCKV_LOAD_FACTOR
 	);
 }
  
@@ -242,7 +343,7 @@ IPC_Lock IPC_KV::get_lock(bool is_writing)
 	 
 	if (m_resize_count != m_controller->getResizeCount())
 	{ 
-		printf("Expired memory, fetching new memory.\n");
+		LOG("Expired memory, fetching new memory.\n");
 
 		UnmapViewOfFile(m_controller->m_data);
 		CloseHandle(m_controller->m_data_handle);
@@ -263,7 +364,7 @@ IPC_Lock IPC_KV::get_lock(bool is_writing)
 
 void IPC_KV::resize()
 {  
-	printf("Resizing memory.\n");
+	LOG("Resizing memory.\n");
 
 	//////////////////////////////////////////
 
@@ -316,7 +417,7 @@ void IPC_KV::resize()
 
 			probeIndex++;
 
-			bucket = (hashCode + C1_CONSTANT * probeIndex + C2_CONSTANT * probeIndex * probeIndex) % new_capacity;
+			bucket = (hashCode + IPCKV_C1_CONSTANT * probeIndex + IPCKV_C2_CONSTANT * probeIndex * probeIndex) % new_capacity;
 			bucketsProbed++;
 		}
 
@@ -334,7 +435,7 @@ void IPC_KV::resize()
 
 size_t IPC_KV::size()
 {
-	auto lock = get_lock(READ_LOCK);
+	auto lock = get_lock(IPCKV_READ_LOCK);
 
 	////////////////////////////////////////////////////
 
@@ -406,33 +507,65 @@ int main()
 	};
 
 
+	std::string title = std::to_string(GetCurrentProcessId());
+
+	SetConsoleTitleA(title.c_str());
+
 	unsigned char dummy_data[] = { 0x68, 0x69 };
 	auto kv = IPC_KV("test");
 
-	while (1)
-	{
-		if (GetAsyncKeyState(VK_DELETE))
+
+	try {
+		/*while (1)
 		{
-			std::string key = random_string(24);
+			if (GetAsyncKeyState(VK_DELETE))
+			{
+				std::string key = random_string(24);
 
-			kv.set(key, dummy_data, sizeof(dummy_data));
-		}
+				kv.set(key, dummy_data, sizeof(dummy_data));
 
-		
+				printf("Written\n");
+				//kv.print();  
+			}
 
-		/*if (!key.empty())
-		{
-			printf("Inserting %s\n", key.c_str());
-			kv.set(key, dummy_data, sizeof(dummy_data));
-		}
-		else
-		{ 
-			should_crash = !should_crash;
-			printf("Will crash %s\n", should_crash ? "YUP BABYE" : "no");
+			if (GetAsyncKeyState(VK_INSERT)) 
+			{
+				kv.print();
+			}
 		}*/
 
+
+		kv.set("Hello World", dummy_data, sizeof(dummy_data));
+		kv.set("How are you?", dummy_data, sizeof(dummy_data));
 		kv.print();
+
+		kv.remove("Hello World");
+		kv.print();
+
+		kv.clear();
+		kv.print();
+
+		kv.set("ABC", dummy_data, sizeof(dummy_data));
+		kv.set("EFG", dummy_data, sizeof(dummy_data));
+		kv.set("XYZ", dummy_data, sizeof(dummy_data));
+		
+		kv.print();
+
+		kv.remove("ABC");
+
+		unsigned char dummy_callback_data[IPCKV_DATA_SIZE];
+		size_t dummy_callback_size;
+
+		printf("Finding EFG 0x%X\n", kv.get("EFG", dummy_callback_data, dummy_callback_size));
+
+		kv.print();
+
 	}
+	catch (std::runtime_error & ex)
+	{
+		printf("Exception %s LastError %X\n", ex.what(), GetLastError());
+	}
+	
 
 	printf("Finished execution, %d\n", kv.size());
 

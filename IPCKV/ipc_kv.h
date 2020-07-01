@@ -5,22 +5,65 @@
 #include <tuple>
 
 #define LOG(...) printf(__VA_ARGS__)
-#define MAX_LOCKS 24
+#define IPCKV_MAX_LOCKS 24
 
-#define MAX_LOAD_FACTOR 0.6f
-#define INITIAL_CAPACITY 11
-#define DATA_SIZE 2048
-#define KEY_SIZE 260
+#define IPCKV_MAX_LOAD_FACTOR 0.6f
+#define IPCKV_INITIAL_CAPACITY 11
+#define IPCKV_DATA_SIZE 2048
+#define IPCKV_KEY_SIZE 260
 
-#define LOAD_FACTOR (float)m_controller->getSize() / (float)m_controller->getCapacity()
+#define IPCKV_LOAD_FACTOR (float)m_controller->getSize() / (float)m_controller->getCapacity()
 
-#define C1_CONSTANT 3
-#define C2_CONSTANT 5
+#define IPCKV_C1_CONSTANT 3
+#define IPCKV_C2_CONSTANT 5
 
-#define READ_LOCK false
-#define WRITE_LOCK true
+#define IPCKV_READ_LOCK false
+#define IPCKV_WRITE_LOCK true
 
 class IPC_Lock;
+class IPC_KV_Controller;
+struct IPC_KV_Data;
+struct IPC_KV_Info;
+
+class IPC_KV 
+{
+public:
+	/**
+	* Constructors and destructors
+	*/
+	IPC_KV(const std::string& name);
+	~IPC_KV();
+
+	/**
+	* Public Methods
+	*/
+	void set(const std::string& key, unsigned char* data, size_t size);
+	bool get(const std::string& key, unsigned char* data, size_t& size);
+	bool remove(const std::string& key);
+	void clear();
+	void print();
+	size_t size();
+private:
+	/**
+	* Private Methods
+	*/
+	void initialize_info(const std::string& name);
+	std::tuple<IPC_KV_Data*, HANDLE> initialize_data(const std::string& name, size_t capacity, size_t resize_count);
+
+	void resize();
+	bool is_prime(size_t input);
+
+	size_t find_nearest_prime(size_t input);
+	uint32_t hash(const char* key, int count);
+	IPC_Lock get_lock(bool is_writing);
+
+	/**
+	* Private Members
+	*/
+	IPC_KV_Controller* m_controller = nullptr;
+	std::string m_name;
+	size_t m_resize_count;
+};
 
 enum IPC_KV_Data_State
 {
@@ -33,8 +76,8 @@ struct IPC_KV_Data
 {
 	IPC_KV_Data_State m_state[2];
 
-	char m_key[2][KEY_SIZE];
-	unsigned char m_value[2][DATA_SIZE];
+	char m_key[2][IPCKV_KEY_SIZE];
+	unsigned char m_value[2][IPCKV_DATA_SIZE];
 
 	size_t m_size[2];
 
@@ -164,7 +207,7 @@ public:
 		m_info_transaction_flags = (InfoTransaction)(m_info_transaction_flags | InfoTransaction::InfoSize);
 	}
 
-	/** 
+	/**
 	* m_Data Setters
 	*/
 
@@ -218,7 +261,7 @@ public:
 
 		m_has_started_data_transaction = true;
 		m_data_transaction_flags = DataTransaction::DataNone;
-	} 
+	}
 
 	void setDataSize(size_t index, size_t size)
 	{
@@ -249,7 +292,7 @@ public:
 
 		bool buffer_state = !m_data[index].m_buffer_state;
 
-		memcpy_s(m_data[index].m_value[buffer_state], DATA_SIZE, data, size);
+		memcpy_s(m_data[index].m_value[buffer_state], IPCKV_DATA_SIZE, data, size);
 		m_data[index].m_size[buffer_state] = size;
 
 		m_data_transaction_flags = (DataTransaction)(m_data_transaction_flags | DataTransaction::DataValue);
@@ -353,44 +396,6 @@ public:
 	HANDLE m_data_handle = nullptr;
 };
 
-class IPC_KV 
-{
-public:
-	/**
-	* Constructors and destructors
-	*/
-	IPC_KV(const std::string& name);
-	~IPC_KV();
-
-	/**
-	* Public Methods
-	*/
-	void set(const std::string& key, unsigned char* data, size_t size);
-	void print();
-	size_t size();
-private:
-	/**
-	* Private Methods
-	*/
-	void initialize_info(const std::string& name);
-	std::tuple<IPC_KV_Data*, HANDLE> initialize_data(const std::string& name, size_t capacity, size_t resize_count);
-
-	void resize();
-	void set_internal(const std::string& key, unsigned char* data, size_t size);
-	bool is_prime(size_t input);
-
-	size_t find_nearest_prime(size_t input);
-	uint32_t hash(const char* key, int count);
-	IPC_Lock get_lock(bool is_writing);
-
-	/**
-	* Private Members
-	*/
-	IPC_KV_Controller* m_controller = nullptr;
-	std::string m_name;
-	size_t m_resize_count;
-};
-
 class IPC_Lock {
 public:
 	IPC_Lock(bool is_write_lock, const std::string& name)
@@ -425,7 +430,7 @@ public:
 			semaphore_handle = CreateSemaphoreA(
 				nullptr,
 				0,
-				MAX_LOCKS,
+				IPCKV_MAX_LOCKS,
 				name.c_str()
 			);
 
@@ -436,7 +441,7 @@ public:
 
 			if (GetLastError() == ERROR_ALREADY_EXISTS)
 			{
-				for (int i = 0; i < MAX_LOCKS; i++)
+				for (int i = 0; i < IPCKV_MAX_LOCKS; i++)
 				{
 					auto wait_result = WaitForSingleObject(semaphore_handle, INFINITE);
 
@@ -454,8 +459,8 @@ public:
 
 			semaphore_handle = CreateSemaphoreA(
 				nullptr,
-				MAX_LOCKS,
-				MAX_LOCKS,
+				IPCKV_MAX_LOCKS,
+				IPCKV_MAX_LOCKS,
 				name.c_str()
 			);
 
@@ -476,7 +481,7 @@ public:
 	{
 		if (semaphore_handle)
 		{
-			ReleaseSemaphore(semaphore_handle, MAX_LOCKS, nullptr);
+			ReleaseSemaphore(semaphore_handle, IPCKV_MAX_LOCKS, nullptr);
 			CloseHandle(semaphore_handle);
 		}
 
