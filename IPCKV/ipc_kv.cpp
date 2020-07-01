@@ -189,7 +189,7 @@ bool IPC_KV::remove(const std::string& key)
 	uint32_t hashCode = hash(key.c_str(), key.length());
 	uint32_t bucket = hashCode % capacity;
 
-	while (bucketsProbed < m_controller->getCapacity())
+	while (bucketsProbed < capacity)
 	{
 		if (m_controller->getDataState(bucket) == IPC_KV_Data_State::Empty)
 		{
@@ -233,7 +233,7 @@ bool IPC_KV::get(const std::string& key, unsigned char* data, size_t & size)
 	uint32_t hashCode = hash(key.c_str(), key.length());
 	uint32_t bucket = hashCode % capacity;
 
-	while (bucketsProbed < m_controller->getCapacity())
+	while (bucketsProbed < capacity)
 	{
 		if (m_controller->getDataState(bucket) == IPC_KV_Data_State::Empty)
 		{
@@ -280,7 +280,7 @@ void IPC_KV::set(const std::string& key, unsigned char* data, size_t size)
 	uint32_t hashCode = hash(key.c_str(), key.length()); 
 	uint32_t bucket = hashCode % capacity; 
 
-	while (bucketsProbed < m_controller->getCapacity())
+	while (bucketsProbed < capacity)
 	{
 		if (m_controller->getDataState(bucket) != IPC_KV_Data_State::Occupied || m_controller->getDataKey(bucket) == key)
 		{ 
