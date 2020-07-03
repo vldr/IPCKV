@@ -21,12 +21,11 @@ IPC_KV::IPC_KV(const std::string& name)
 
 	m_controller->m_data = std::get<0>(data_tuple);
 	m_controller->m_data_handle = std::get<1>(data_tuple);
-}
+} 
 
 IPC_KV::~IPC_KV()
 {
-	if (m_controller)
-		delete m_controller;
+	close();
 }
 
 void IPC_KV::initialize_info(const std::string& name)
@@ -98,7 +97,7 @@ void IPC_KV::initialize_info(const std::string& name)
 
 std::tuple<IPC_KV_Data*, HANDLE> IPC_KV::initialize_data(const std::string& name, size_t capacity, size_t resize_count)
 {
-	auto allocation_size = sizeof(IPC_KV_Data) * capacity;
+	auto allocation_size = DWORD(sizeof(IPC_KV_Data) * capacity);
 
 	///////////////////////////////////////////
 
@@ -142,7 +141,7 @@ std::tuple<IPC_KV_Data*, HANDLE> IPC_KV::initialize_data(const std::string& name
 		CloseHandle(data_handle);
 
 		throw std::runtime_error("could not map view of file.");
-	}
+	} 
 
 	///////////////////////////////////////////
 
@@ -154,6 +153,16 @@ std::tuple<IPC_KV_Data*, HANDLE> IPC_KV::initialize_data(const std::string& name
 	}
 
 	return std::make_tuple((IPC_KV_Data*)buffer, data_handle);
+}
+
+void IPC_KV::close()
+{
+	if (m_controller) 
+	{
+		delete m_controller;
+
+		m_controller = nullptr;
+	}
 }
 
 void IPC_KV::clear()
@@ -181,13 +190,13 @@ bool IPC_KV::remove(const std::string& key)
 {
 	auto lock = get_lock(IPCKV_WRITE_LOCK);
 
-	uint32_t probeIndex = 0;
-	uint32_t bucketsProbed = 0;
+	size_t probeIndex = 0;
+	size_t bucketsProbed = 0;
 
-	uint32_t capacity = m_controller->getCapacity();
+	size_t capacity = m_controller->getCapacity();
 
-	uint32_t hashCode = hash(key.c_str(), key.length());
-	uint32_t bucket = hashCode % capacity;
+	size_t hashCode = hash(key.c_str(), key.length());
+	size_t bucket = hashCode % capacity;
 
 	while (bucketsProbed < capacity)
 	{
@@ -225,13 +234,13 @@ bool IPC_KV::get(const std::string& key, unsigned char* data, size_t & size)
 {
 	auto lock = get_lock(IPCKV_READ_LOCK);
 
-	uint32_t probeIndex = 0;
-	uint32_t bucketsProbed = 0;
+	size_t probeIndex = 0;
+	size_t bucketsProbed = 0;
 
-	uint32_t capacity = m_controller->getCapacity();
+	size_t capacity = m_controller->getCapacity();
 
-	uint32_t hashCode = hash(key.c_str(), key.length());
-	uint32_t bucket = hashCode % capacity;
+	size_t hashCode = hash(key.c_str(), key.length());
+	size_t bucket = hashCode % capacity;
 
 	while (bucketsProbed < capacity)
 	{
@@ -272,13 +281,13 @@ void IPC_KV::set(const std::string& key, unsigned char* data, size_t size)
 	if (IPCKV_LOAD_FACTOR >= IPCKV_MAX_LOAD_FACTOR)
 		resize();
 	 
-	uint32_t probeIndex = 0;
-	uint32_t bucketsProbed = 0;
+	size_t probeIndex = 0;
+	size_t bucketsProbed = 0;
 
-	uint32_t capacity = m_controller->getCapacity();
+	size_t capacity = m_controller->getCapacity();
 
-	uint32_t hashCode = hash(key.c_str(), key.length()); 
-	uint32_t bucket = hashCode % capacity; 
+	size_t hashCode = hash(key.c_str(), key.length());
+	size_t bucket = hashCode % capacity;
 
 	while (bucketsProbed < capacity)
 	{
@@ -300,7 +309,7 @@ void IPC_KV::set(const std::string& key, unsigned char* data, size_t size)
 			return;
 		}
 
-		LOG("Collision! %s -> %d\n", key.c_str(), bucket);
+		LOG("Collision! %s -> %zd\n", key.c_str(), bucket);
 
 		probeIndex++;
 
@@ -313,6 +322,7 @@ void IPC_KV::set(const std::string& key, unsigned char* data, size_t size)
 
 void IPC_KV::print()
 {
+#ifdef _DEBUG
 	auto lock = get_lock(IPCKV_READ_LOCK);
 
 	////////////////////////////////////////////////////
@@ -322,18 +332,20 @@ void IPC_KV::print()
 	for (size_t i = 0; i < capacity; i++)
 	{
 		if (m_controller->getDataState(i) == IPC_KV_Data_State::Occupied)
-			LOG("[%d] %s 0x%X\n", i, m_controller->getDataKey(i), m_controller->getDataSize(i));
+			LOG("[%zd] %s 0x%zX\n", i, m_controller->getDataKey(i), m_controller->getDataSize(i));
 
 		if (m_controller->getDataState(i) == IPC_KV_Data_State::Deleted)
-			LOG("[%d] Deleted\n", i);
+			LOG("[%zd] Deleted\n", i);
 	}
 
-	LOG("Capacity %d, Size %d, Resizes %d, Load Factor %f\n",
+	LOG("Capacity %zd, Size %zd, Resizes %zd, Load Factor %f\n",
 		m_controller->getCapacity(), 
 		m_controller->getSize(),
 		m_controller->getResizeCount(), 
 		IPCKV_LOAD_FACTOR
 	);
+
+#endif
 }
  
 
@@ -396,11 +408,11 @@ void IPC_KV::resize()
 
 		/////////////////////////////////////////////////////
 
-		uint32_t probeIndex = 0;
-		uint32_t bucketsProbed = 0;
+		size_t probeIndex = 0;
+		size_t bucketsProbed = 0;
 
-		uint32_t hashCode = hash(key, keyLength);
-		uint32_t bucket = hashCode % new_capacity;
+		size_t hashCode = hash(key, keyLength);
+		size_t bucket = hashCode % new_capacity;
 
 		while (bucketsProbed < new_capacity)
 		{
@@ -465,7 +477,7 @@ bool IPC_KV::is_prime(size_t input)
 	return true;
 }
 
-uint32_t IPC_KV::hash(const char * key, int count)
+uint32_t IPC_KV::hash(const char * key, size_t count)
 {
 	typedef uint32_t* P;
 	uint32_t h = 0x811c9dc5;
@@ -481,6 +493,8 @@ uint32_t IPC_KV::hash(const char * key, int count)
 #undef tmp
 	return h ^ (h >> 16);
 }
+
+#ifdef _DEBUG
 
 #include <random>
 #include <string>
@@ -517,7 +531,7 @@ int main()
 
 	try {
 		auto kv = IPC_KV("test");
-		kv.set("How are you?", dummy_data, sizeof(dummy_data));
+		/*kv.set("How are you?", dummy_data, sizeof(dummy_data));
 		kv.set("Hello World", dummy_data, sizeof(dummy_data));
 		kv.print();
 
@@ -539,9 +553,15 @@ int main()
 		size_t dummy_callback_size;
 
 		printf("Finding EFG 0x%X\n", kv.get("EFG", dummy_callback_data, dummy_callback_size));
+		*/
 
-		kv.print();
-		printf("Finished execution, %d\n", kv.size());
+		while (1)
+		{
+			kv.print();
+			getchar();
+		}
+
+		
 	}
 	catch (std::runtime_error & ex)
 	{
@@ -553,3 +573,5 @@ int main()
 
 	return 0;
 }
+
+#endif

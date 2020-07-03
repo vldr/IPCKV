@@ -2,21 +2,26 @@
 #include <Windows.h>
 #include <string>
 #include <iostream>
-#include <tuple>
+#include <tuple> 
 
+
+#ifdef _DEBUG
 #define LOG(...) printf(__VA_ARGS__)
-#define IPCKV_MAX_LOCKS 24
-
-#define IPCKV_MAX_LOAD_FACTOR 0.6f
-#define IPCKV_INITIAL_CAPACITY 11
-#define IPCKV_DATA_SIZE 2048
+#else
+#define LOG(...)
+#endif
+#define IPCKV_MAX_LOCKS 24 
+ 
+#define IPCKV_MAX_LOAD_FACTOR 0.6f  
+#define IPCKV_INITIAL_CAPACITY 101
+#define IPCKV_DATA_SIZE 2048 
 #define IPCKV_KEY_SIZE 260
 
 #define IPCKV_LOAD_FACTOR (float)m_controller->getSize() / (float)m_controller->getCapacity()
 
 #define IPCKV_C1_CONSTANT 3
 #define IPCKV_C2_CONSTANT 5
-
+ 
 #define IPCKV_READ_LOCK false
 #define IPCKV_WRITE_LOCK true
 
@@ -45,6 +50,7 @@ public:
 	void clear();
 	void print();
 	size_t size();
+	void close();
 private:
 	/**
 	* Private Methods
@@ -56,7 +62,7 @@ private:
 	bool is_prime(size_t input);
 
 	size_t find_nearest_prime(size_t input);
-	uint32_t hash(const char* key, int count);
+	uint32_t hash(const char* key, size_t count);
 	IPC_Lock get_lock(bool is_writing);
 
 	/**
